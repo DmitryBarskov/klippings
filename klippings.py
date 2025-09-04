@@ -2,6 +2,7 @@
 
 import argparse
 import platform
+import re
 from pathlib import Path
 from ebooklib import epub
 from bs4 import BeautifulSoup
@@ -16,19 +17,65 @@ def default_clippings_path():
         return None
 
 
+def parse_meta(meta_line: str):
+    """
+    >>> parse_meta('- Your Bookmark on Location 2473 | Added on Tuesday, September 2, 2025 12:08:11 AM')
+    {'type': 'Bookmark', 'page': None, 'location': '2473'}
+    >>> parse_meta('- Your Highlight on page 379 | Location 2805-2806 | Added on Sunday, August 31, 2025 12:10:21 AM')
+    {'type': 'Highlight', 'page': '379', 'location': '2805-2806'}
+    >>> parse_meta('- Your Bookmark on page 343-344 | Added on Sunday, February 16, 2025 10:08:13 PM')
+    {'type': 'Bookmark', 'page': '343-344', 'location': None}
+    """
+
+    match_obj = re.match(r'- Your (?P<type>Bookmark|Highlight) on (page (?P<pg_only>\d+(-\d+)?)|Location (?P<loc_only>\d+(-\d+)?)|page (?P<pg>\d+) \| Location (?P<loc>\d+(-\d+)?)) \| Added.*', meta_line)
+    groups = match_obj.groupdict() if match_obj is not None else {}
+    return {
+        'type': groups.get('type'),
+        'page': groups.get('pg_only') or groups.get('pg'),
+        'location': groups.get('loc_only') or groups.get('loc'),
+    }
+
+
 # ---------- Parsing Kindle Clippings ----------
-def parse_clippings(file_path):
-    with open(file_path, "r", encoding="utf-8-sig") as f:
-        content = f.read()
+def parse_clippings(content: str):
+    """
+    >>> s = '''
+    ... Steven Low, DPT - Overcoming Gravity
+    ... - Your Highlight on Location 2572-2573 | Added on Tuesday, July 2, 2024 12:08:10 AM
+    ...
+    ... inverted hang and then back again
+    ... ==========
+    ... Steven Low, DPT - Overcoming Gravity
+    ... - Your Highlight on Location 3042-3043 | Added on Friday, July 12, 2024 1:45:31 AM
+    ...
+    ... Planche isometrics fall solidly into the
+    ... ==========
+    ... Steven Low - Overcoming Gravity Advanced Programming
+    ... - Your Highlight on page 11 | Location 170-172 | Added on Sunday, February 9, 2025 12:26:53 PM
+    ...
+    ... Since your goal is primarily strength increases
+    ... ==========
+    ... Адитья Бхаргава - Грокаем алгоритмы
+    ... - Your Bookmark on page 343 | Added on Sunday, February 16, 2025 10:08:13 PM
+    ... '''
+    >>> list(parse_clippings(s))
+    [{'book': 'Steven Low, DPT - Overcoming Gravity', 'text': 'inverted hang and then back again', 'type': 'Highlight', 'page': None, 'location': '2572-2573'}, {'book': 'Steven Low, DPT - Overcoming Gravity', 'text': 'Planche isometrics fall solidly into the', 'type': 'Highlight', 'page': None, 'location': '3042-3043'}, {'book': 'Steven Low - Overcoming Gravity Advanced Programming', 'text': 'Since your goal is primarily strength increases', 'type': 'Highlight', 'page': '11', 'location': '170-172'}]
+    """
 
     entries = content.split("==========")
-    notes = []
+    notes_by_book = {}
     for entry in entries:
         lines = [line.strip() for line in entry.strip().split("\n") if line.strip()]
         if len(lines) >= 3:
-            book = lines[0]
-            text = lines[-1]
-            notes.append({"book": book, "text": text})
+            book, meta, *text = lines
+
+            if book not in notes_by_book:
+                notes_by_book[book] = []
+            notes_by_book[book].append({"book": book, "text": "\n".join(text), **parse_meta(meta)})
+    notes = []
+    for single_book_notes in notes_by_book.values():
+        for note in single_book_notes:
+            notes.append(note)
     return notes
 
 
@@ -78,19 +125,21 @@ def find_context(note, books_folder):
 
 
 # ---------- Main ----------
-def main(clippings, books, output):
-    notes = parse_clippings(clippings)
+def main(clippings_path: str, books, output):
+    with open(clippings_path, "r", encoding="utf-8") as f:
+        content = f.read()
+        notes = parse_clippings(content)
 
-    with open(output, "w", encoding="utf-8") as out:
-        for note in notes:
-            context = find_context(note, books)
-            out.write(f"## {note['book']}\n\n")
-            out.write(f"**Note:** {note['text']}\n\n")
-            if context:
-                out.write(f"**Context:** {context}\n\n")
-            else:
-                out.write("**Context:** Not found\n\n")
-            out.write("---\n\n")
+        with open(output, "w", encoding="utf-8") as out:
+            for note in notes:
+                context = find_context(note, books)
+                out.write(f"## {note['book']}\n\n")
+                out.write(f"**Note:** {note['text']}\n\n")
+                if context:
+                    out.write(f"**Context:** {context}\n\n")
+                else:
+                    out.write("**Context:** Not found\n\n")
+                out.write("---\n\n")
 
 
 if __name__ == "__main__":
