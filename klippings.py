@@ -84,7 +84,7 @@ def search_epub(book_path, note, context=200):
     try:
         book = epub.read_epub(book_path)
         for item in book.get_items():
-            if item.get_type() == 9:  # DOCUMENT
+            if item.get_type() == 9: # DOCUMENT
                 soup = BeautifulSoup(item.get_body_content(), "html.parser")
                 text = soup.get_text(" ")
                 idx = text.find(note)
